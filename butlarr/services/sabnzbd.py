@@ -106,23 +106,100 @@ class Sabnzbd(ArrService):
             # Return empty queue on error
             return {"records": [], "totalRecords": 0, "speed": "0 B/s", "paused": False, "timeleft": "0:00:00"}
 
+    def pause_queue(self):
+        """Pause the SABnzbd queue"""
+        params = {
+            "mode": "pause",
+            "apikey": self.api_key
+        }
+        try:
+            return self.request("api", params=params, fallback={"status": False})
+        except Exception:
+            return {"status": False}
+
+    def resume_queue(self):
+        """Resume the SABnzbd queue"""
+        params = {
+            "mode": "resume",
+            "apikey": self.api_key
+        }
+        try:
+            return self.request("api", params=params, fallback={"status": False})
+        except Exception:
+            return {"status": False}
+
+    def pause_item(self, nzo_id: str):
+        """Pause a specific download item"""
+        params = {
+            "mode": "queue",
+            "name": "pause",
+            "value": nzo_id,
+            "apikey": self.api_key
+        }
+        try:
+            return self.request("api", params=params, fallback={"status": False})
+        except Exception:
+            return {"status": False}
+
+    def resume_item(self, nzo_id: str):
+        """Resume a specific download item"""
+        params = {
+            "mode": "queue",
+            "name": "resume",
+            "value": nzo_id,
+            "apikey": self.api_key
+        }
+        try:
+            return self.request("api", params=params, fallback={"status": False})
+        except Exception:
+            return {"status": False}
+
     @keyboard
     def create_queue_keyboard(self, state: QueueState):
         total_pages = max(1, (int(state.items["totalRecords"]) + state.page_size - 1) // state.page_size)
-        return [
-            [
-                (
-                    Button("Prev page", self.get_clbk("queue", state.page - 1))
-                    if state.page > 0
-                    else Button()
-                ),
-                (
-                    Button("Next page", self.get_clbk("queue", state.page + 1))
-                    if state.page < total_pages - 1
-                    else Button()
-                ),
-            ],
+
+        # Main queue pause/resume button
+        is_paused = state.items.get("paused", False)
+        main_button_text = "▶️ Resume Queue" if is_paused else "⏸️ Pause Queue"
+        main_action = "resume_queue" if is_paused else "pause_queue"
+
+        buttons = [
+            [Button(main_button_text, self.get_clbk(main_action))],
         ]
+
+        # Individual item pause/resume buttons
+        offset = state.page * state.page_size
+        for idx, item in enumerate(state.items["records"]):
+            nzo_id = item.get("nzo_id", "")
+            if nzo_id:
+                item_status = item.get("status", "").lower()
+                # SABnzbd uses "Paused" status for paused items
+                is_item_paused = item_status == "paused"
+                item_number = offset + idx + 1
+
+                if is_item_paused:
+                    button_text = f"▶️ Resume #{item_number}"
+                    buttons.append([Button(button_text, self.get_clbk("resume_item", nzo_id))])
+                else:
+                    button_text = f"⏸️ Pause #{item_number}"
+                    buttons.append([Button(button_text, self.get_clbk("pause_item", nzo_id))])
+
+        # Navigation buttons
+        nav_buttons = []
+        if state.page > 0:
+            nav_buttons.append(Button("⬅️ Prev", self.get_clbk("queue", state.page - 1)))
+        else:
+            nav_buttons.append(Button())
+
+        if state.page < total_pages - 1:
+            nav_buttons.append(Button("Next ➡️", self.get_clbk("queue", state.page + 1)))
+        else:
+            nav_buttons.append(Button())
+
+        if len(nav_buttons) > 0 and any(btn.title for btn in nav_buttons):
+            buttons.append(nav_buttons)
+
+        return buttons
 
     def create_queue_message(self, state: QueueState, full_redraw=False):
         # Queue header with overall status
@@ -131,7 +208,15 @@ class Sabnzbd(ArrService):
         total_timeleft = state.items.get("timeleft", "0:00:00")
 
         status_emoji = "⏸️" if paused else "📥"
-        lines = [f"*{status_emoji} SABnzbd Queue*", f"_Speed: {escape_markdownv2_chars(speed)} • Time left: {escape_markdownv2_chars(total_timeleft)}_", ""]
+        lines = [f"*{status_emoji} SABnzbd Queue*"]
+
+        # Only show speed and time left if queue is not paused
+        if not paused:
+            lines.append(f"_Speed: {escape_markdownv2_chars(speed)} • Time left: {escape_markdownv2_chars(total_timeleft)}_")
+        else:
+            lines.append(f"_Queue is paused_")
+
+        lines.append("")
 
         offset = state.page * state.page_size + 1
 
@@ -149,7 +234,13 @@ class Sabnzbd(ArrService):
             remaining = WIDTH - progress
 
             title = escape_markdownv2_chars(item.get("title", "Unknown")[0:60])  # Limit title length
-            title_ln = f"{offset + idx}\\. *{title}*"
+
+            # Add pause indicator to title for paused items
+            item_status = item.get("status", "").lower()
+            is_item_paused = item_status == "paused"
+            status_indicator = "⏸️ " if is_item_paused else ""
+
+            title_ln = f"{offset + idx}\\. {status_indicator}*{title}*"
 
             # Create progress bar with percentage
             progress_bar = f"{'█' * progress}{'░' * remaining}"
@@ -233,7 +324,9 @@ class Sabnzbd(ArrService):
     @authorized(min_auth_level=AuthLevels.USER)
     async def cmd_queue(self, update, context, args):
         # This is the same implementation as cmd_default
-        return await self.cmd_default(update, context, args)    @repaint
+        return await self.cmd_default(update, context, args)
+
+    @repaint
     @callback(cmds=["queue"])
     @sessionState()
     @authorized(min_auth_level=AuthLevels.USER)
@@ -245,6 +338,88 @@ class Sabnzbd(ArrService):
             items=items,
             page=new_page,
             page_size=PAGE_SIZE,
+        )
+
+        return self.create_queue_message(new_state)
+
+    @repaint
+    @callback(cmds=["pause_queue"])
+    @sessionState()
+    @authorized(min_auth_level=AuthLevels.USER)
+    async def clbk_pause_queue(self, update, context, args, state):
+        # Pause the queue
+        self.pause_queue()
+
+        # Refresh the queue data to get updated status
+        items = self.get_queue(page=state.page, page_size=state.page_size)
+
+        new_state = QueueState(
+            items=items,
+            page=state.page,
+            page_size=state.page_size,
+        )
+
+        return self.create_queue_message(new_state)
+
+    @repaint
+    @callback(cmds=["resume_queue"])
+    @sessionState()
+    @authorized(min_auth_level=AuthLevels.USER)
+    async def clbk_resume_queue(self, update, context, args, state):
+        # Resume the queue
+        self.resume_queue()
+
+        # Refresh the queue data to get updated status
+        items = self.get_queue(page=state.page, page_size=state.page_size)
+
+        new_state = QueueState(
+            items=items,
+            page=state.page,
+            page_size=state.page_size,
+        )
+
+        return self.create_queue_message(new_state)
+
+    @repaint
+    @callback(cmds=["pause_item"])
+    @sessionState()
+    @authorized(min_auth_level=AuthLevels.USER)
+    async def clbk_pause_item(self, update, context, args, state):
+        # Extract nzo_id from the callback args
+        nzo_id = args[1]  # args[0] is "pause_item", args[1] is the nzo_id
+
+        # Pause the specific item
+        self.pause_item(nzo_id)
+
+        # Refresh the queue data to get updated status
+        items = self.get_queue(page=state.page, page_size=state.page_size)
+
+        new_state = QueueState(
+            items=items,
+            page=state.page,
+            page_size=state.page_size,
+        )
+
+        return self.create_queue_message(new_state)
+
+    @repaint
+    @callback(cmds=["resume_item"])
+    @sessionState()
+    @authorized(min_auth_level=AuthLevels.USER)
+    async def clbk_resume_item(self, update, context, args, state):
+        # Extract nzo_id from the callback args
+        nzo_id = args[1]  # args[0] is "resume_item", args[1] is the nzo_id
+
+        # Resume the specific item
+        self.resume_item(nzo_id)
+
+        # Refresh the queue data to get updated status
+        items = self.get_queue(page=state.page, page_size=state.page_size)
+
+        new_state = QueueState(
+            items=items,
+            page=state.page,
+            page_size=state.page_size,
         )
 
         return self.create_queue_message(new_state)
