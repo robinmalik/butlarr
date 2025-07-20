@@ -22,7 +22,7 @@ class QueueState:
 
 
 @handler
-class Sabnzbd(ArrService):
+class SABnzbd(ArrService):
     def __init__(
         self,
         commands: List[str],

@@ -1,4 +1,4 @@
-telegram: 
+telegram:
   token: "<YOUR_TELEGRAM_TOKEN>"
 
 auth_passwords:
@@ -13,6 +13,9 @@ apis:
   series:
     api_host: "<HOST_API_1>"
     api_key: "<API_KEY_1>"
+  sabnzbd:
+    api_host: "<HOST_API_2>"
+    api_key: "<API_KEY_2>"
 
 services:
   - type: "Radarr"
@@ -21,3 +24,6 @@ services:
   - type: "Sonarr"
     commands: ["series", "s"]
     api: "series"
+  - type: "SABnzbd"
+    commands: ["queue", "q"]
+    api: "sabnzbd"
