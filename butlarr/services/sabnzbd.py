@@ -11,6 +11,7 @@ from ..tg_handler.message import Response, repaint, clear
 from ..tg_handler.auth import authorized, AuthLevels
 from ..tg_handler.session_state import sessionState, default_session_state_key_fn
 from ..tg_handler.keyboard import Button
+import datetime
 
 
 @dataclass(frozen=True)
@@ -357,7 +358,19 @@ class Sabnzbd(ArrService):
             page_size=state.page_size,
         )
 
-        return self.create_queue_message(new_state)
+        # Create the response message
+        response = self.create_queue_message(new_state)
+
+        # Add a timestamp to ensure the message content is different (to avoid Telegram's "not modified" error)
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        response_with_timestamp = Response(
+            caption=response.caption + f"\n\n_Last updated: {escape_markdownv2_chars(timestamp)}_",
+            reply_markup=response.reply_markup,
+            state=response.state,
+            parse_mode=response.parse_mode,
+        )
+
+        return response_with_timestamp
 
     @repaint
     @callback(cmds=["pause_queue"])
