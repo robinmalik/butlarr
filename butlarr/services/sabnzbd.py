@@ -164,6 +164,7 @@ class Sabnzbd(ArrService):
         main_action = "resume_queue" if is_paused else "pause_queue"
 
         buttons = [
+            [Button("🔄 Refresh", self.get_clbk("refresh"))],
             [Button(main_button_text, self.get_clbk(main_action))],
         ]
 
@@ -178,10 +179,10 @@ class Sabnzbd(ArrService):
                 item_number = offset + idx + 1
 
                 if is_item_paused:
-                    button_text = f"▶️ Resume #{item_number}"
+                    button_text = f"▶️ Resume Download #{item_number}"
                     buttons.append([Button(button_text, self.get_clbk("resume_item", nzo_id))])
                 else:
-                    button_text = f"⏸️ Pause #{item_number}"
+                    button_text = f"⏸️ Pause Download #{item_number}"
                     buttons.append([Button(button_text, self.get_clbk("pause_item", nzo_id))])
 
         # Navigation buttons
@@ -208,13 +209,13 @@ class Sabnzbd(ArrService):
         total_timeleft = state.items.get("timeleft", "0:00:00")
 
         status_emoji = "⏸️" if paused else "📥"
-        lines = [f"*{status_emoji} SABnzbd Queue*"]
+
+        # Output "SABnzbd Queue - " plus the status in uppercase (PAUSED or ACTIVE)
+        lines = [f"*{status_emoji} SABnzbd Queue \- {('PAUSED' if paused else 'ACTIVE')}*"]
 
         # Only show speed and time left if queue is not paused
         if not paused:
             lines.append(f"_Speed: {escape_markdownv2_chars(speed)} • Time left: {escape_markdownv2_chars(total_timeleft)}_")
-        else:
-            lines.append(f"_Queue is paused_")
 
         lines.append("")
 
@@ -238,7 +239,7 @@ class Sabnzbd(ArrService):
             # Add pause indicator to title for paused items
             item_status = item.get("status", "").lower()
             is_item_paused = item_status == "paused"
-            status_indicator = "⏸️ " if is_item_paused else ""
+            status_indicator = "⏸️ " if is_item_paused else "▶️ "
 
             title_ln = f"{offset + idx}\\. {status_indicator}*{title}*"
 
@@ -338,6 +339,22 @@ class Sabnzbd(ArrService):
             items=items,
             page=new_page,
             page_size=PAGE_SIZE,
+        )
+
+        return self.create_queue_message(new_state)
+
+    @repaint
+    @callback(cmds=["refresh"])
+    @sessionState()
+    @authorized(min_auth_level=AuthLevels.USER)
+    async def clbk_refresh(self, update, context, args, state):
+        # Refresh the queue data to get updated progress
+        items = self.get_queue(page=state.page, page_size=state.page_size)
+
+        new_state = QueueState(
+            items=items,
+            page=state.page,
+            page_size=state.page_size,
         )
 
         return self.create_queue_message(new_state)
